@@ -1,0 +1,60 @@
+# ── Binaries ──────────────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ── Go build artifacts ────────────────────────────────────────────────────────
+/bin/
+/dist/
+*.test
+*.out
+coverage.html
+coverage.out
+cpu.prof
+mem.prof
+
+# ── Go workspace ──────────────────────────────────────────────────────────────
+go.work
+go.work.sum
+
+# ── Dependency vendor (we use module proxy) ───────────────────────────────────
+/vendor/
+
+# ── Environment & secrets — NEVER commit these ───────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.yaml
+secrets.json
+
+# ── AWS credentials & config ──────────────────────────────────────────────────
+.aws/
+aws-credentials*
+*.aws
+
+# ── IDE & editor ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Local dev infrastructure ──────────────────────────────────────────────────
+samples/local-dev/.localstack/
+samples/local-dev/data/
+docker-compose.override.yml
+
+# ── Test & coverage ───────────────────────────────────────────────────────────
+testdata/secrets/
+*.coverprofile
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
