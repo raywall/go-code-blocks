@@ -1,3 +1,4 @@
+// core/errors.go
 package core
 
 import "errors"

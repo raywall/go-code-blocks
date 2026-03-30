@@ -1,3 +1,4 @@
+// core/block.go
 package core
 
 import "context"

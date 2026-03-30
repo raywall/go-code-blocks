@@ -1,3 +1,4 @@
+// core/get.go
 package core
 
 import "fmt"
