@@ -7,17 +7,17 @@
 **go-code-blocks** é uma biblioteca Go que permite montar integrações complexas a partir de blocos independentes e reutilizáveis. Cada bloco encapsula um recurso externo — AWS DynamoDB, S3, Redis, SSM, Secrets Manager, qualquer REST API — e expõe uma API tipada e idiomática. Um bloco de decisão baseado em CEL ([go-decision-engine](https://github.com/raywall/go-decision-engine)) conecta os blocos com lógica de negócio declarativa, sem if/else espalhados pelo código.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Container                            │
-│                                                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐     │
-│  │ decision │  │ dynamodb │  │  redis   │  │ restapi  │     │
-│  │  (CEL)   │  │          │  │          │  │ + OAuth2 │     │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘     │
-│       │              │              │              │        │
-│       └──────────────┴──────────────┴──────────────┘        │
-│                    InitAll / ShutdownAll                    │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                           Container                              │
+│                                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
+│  │ decision │  │ dynamodb │  │  redis   │  │    restapi     │    │
+│  │  (CEL)   │  │          │  │          │  │ Pipeline / DAG │    │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────┬────────┘    │
+│       │             │             │                │             │
+│       └─────────────┴─────────────┴────────────────┘             │
+│                      InitAll / ShutdownAll                       │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Funcionalidades
@@ -25,9 +25,12 @@
 - **Blocos prontos** para DynamoDB, S3, Redis, SSM Parameter Store, Secrets Manager e REST APIs
 - **Bloco de decisão** com regras CEL compiladas — lógica de negócio declarativa, sem if/else
 - **Encadeamento de autenticação** — um bloco OAuth2 pode autorizar outro (`WithTokenProvider`)
+- **Execução concorrente** — `FanOut` para requests independentes em paralelo; `Pipeline` com grafo de dependências (DAG) que maximiza o paralelismo em ondas
+- **Cascade abort** — quando um step essencial falha, todos os dependentes são abortados automaticamente sem fazer chamadas desnecessárias
+- **Retry com backoff** — política de retry configurável por step ou por pipeline, com detecção automática de erros transientes
 - **Options pattern** consistente em todos os blocos — sem structs de configuração expostas
 - **Container com lifecycle** — `InitAll` em ordem, `ShutdownAll` em ordem reversa
-- **Erros tipados** — `core.ErrItemNotFound`, `core.ErrNotInitialized`, etc.
+- **Erros tipados** — `core.ErrItemNotFound`, `core.ErrNotInitialized`, `restapi.ErrSkipped`, etc.
 - **Prefixos automáticos** de chave no Redis e S3
 - **Paginação encapsulada** no S3 e SSM; paginação controlada pelo caller no DynamoDB
 
@@ -130,7 +133,7 @@ block := dynamodb.New[T](name,
 | `PutItem(ctx, item T)` | Upsert completo |
 | `GetItem(ctx, pk, sk)` | Busca por chave primária |
 | `DeleteItem(ctx, pk, sk)` | Remoção por chave primária |
-| `QueryItems(ctx, QueryInput)` | Query paginada com expressão CEL |
+| `QueryItems(ctx, QueryInput)` | Query paginada com expressão |
 | `ScanItems(ctx, limit, lastKey)` | Scan completo paginado |
 
 ### S3
@@ -243,6 +246,8 @@ block := restapi.New(name,
 | `Delete / Head(ctx, path)` | Sem body |
 | `GetJSON / PostJSON / PutJSON / PatchJSON` | Helpers com deserialização automática |
 | `Do(ctx, Request)` | Request totalmente customizado |
+| `FanOut(ctx, requests, ...opts)` | N requests independentes em paralelo |
+| `Pipeline(ctx, steps, ...opts)` | DAG de steps com dependências e retry |
 
 #### Encadeamento de token (OAuth2 → Bearer)
 
@@ -260,6 +265,140 @@ api := restapi.New("api",
 
 app.MustRegister(auth)
 app.MustRegister(api)  // auth deve ser registrado primeiro
+```
+
+#### Execução concorrente com FanOut
+
+`FanOut` executa todos os requests de forma totalmente paralela numa única chamada. Ideal quando as requisições são independentes entre si:
+
+```go
+results, err := api.FanOut(ctx, map[string]restapi.Request{
+    "user":    {Path: "/users/123"},
+    "catalog": {Path: "/products?limit=50"},
+    "rates":   {Path: "/shipping/rates"},
+}, restapi.WithDefaultRetry(restapi.RetryPolicy{
+    MaxAttempts: 3,
+    Delay:       100 * time.Millisecond,
+    Backoff:     2.0,
+}))
+
+var user User
+results.JSON("user", &user)
+```
+
+#### Pipeline com DAG e cascade abort
+
+`Pipeline` organiza os steps em ondas de execução usando ordenação topológica. Dentro de cada onda, todos os steps independentes correm em paralelo. Steps de ondas posteriores recebem os resultados das ondas anteriores para construir seus requests dinamicamente.
+
+Quando um step falha, todos os steps que dependem dele — direta ou transitivamente — são abortados automaticamente (`ErrSkipped`), sem fazer nenhuma chamada HTTP desnecessária:
+
+```go
+//  Wave 0: [user, catalog]  ──────────── paralelos, sem dependências
+//  Wave 1: [orders, payments] ────────── paralelos, dependem de "user"
+//  Wave 2: [summary] ─────────────────── depende de "orders" + "catalog"
+//
+//  Se "user" falhar → orders, payments e summary são abortados em cascata.
+
+steps := []restapi.PipelineStep{
+    {
+        Name:  "user",
+        Build: func(ctx context.Context, _ *restapi.Results) (restapi.Request, error) {
+            return restapi.Request{Path: "/users/123"}, nil
+        },
+    },
+    {
+        Name:  "catalog",
+        Build: func(ctx context.Context, _ *restapi.Results) (restapi.Request, error) {
+            return restapi.Request{Path: "/products?limit=10"}, nil
+        },
+    },
+    {
+        Name:      "orders",
+        DependsOn: []string{"user"},         // abortado se "user" falhar
+        Retry: &restapi.RetryPolicy{         // retry específico por step
+            MaxAttempts: 3,
+            Delay:       200 * time.Millisecond,
+            Backoff:     2.0,
+        },
+        Build: func(ctx context.Context, prev *restapi.Results) (restapi.Request, error) {
+            var u User
+            if err := prev.JSON("user", &u); err != nil {
+                return restapi.Request{}, err
+            }
+            return restapi.Request{Path: "/orders?user_id=" + u.ID}, nil
+        },
+    },
+    {
+        Name:      "summary",
+        DependsOn: []string{"orders", "catalog"},
+        Build: func(ctx context.Context, prev *restapi.Results) (restapi.Request, error) {
+            // usa dados de ambas as waves anteriores
+            var orders []Order
+            var catalog []Product
+            prev.JSON("orders", &orders)
+            prev.JSON("catalog", &catalog)
+            return restapi.Request{Method: "POST", Path: "/summary",
+                Body: map[string]any{"orders": len(orders), "products": len(catalog)}}, nil
+        },
+    },
+}
+
+results, err := api.Pipeline(ctx, steps,
+    restapi.WithDefaultRetry(restapi.RetryPolicy{   // retry padrão para todos os steps
+        MaxAttempts: 2,
+        Delay:       100 * time.Millisecond,
+        Backoff:     1.5,
+    }),
+    restapi.WithMaxConcurrency(5),   // máximo de goroutines por onda
+    restapi.WithContinueOnError(),   // coleta todos os resultados mesmo com falhas
+)
+```
+
+#### Retry com backoff exponencial
+
+A política de retry pode ser definida em três níveis, em ordem de precedência:
+
+```
+step.Retry  >  WithDefaultRetry(policy)  >  sem retry (1 tentativa)
+```
+
+```go
+// Apenas para um step específico
+restapi.PipelineStep{
+    Name:  "orders",
+    Retry: &restapi.RetryPolicy{
+        MaxAttempts: 4,                      // 1 original + 3 retries
+        Delay:       200 * time.Millisecond, // espera antes do 2º attempt
+        Backoff:     2.0,                    // dobra a espera a cada retry: 200ms → 400ms → 800ms
+    },
+}
+
+// Como padrão para todo o pipeline ou FanOut
+restapi.WithDefaultRetry(restapi.RetryPolicy{
+    MaxAttempts: 3,
+    Delay:       100 * time.Millisecond,
+    Backoff:     1.5,  // 100ms → 150ms → done
+})
+```
+
+Erros que disparam retry: erros de rede, HTTP 429, 500, 502, 503, 504. Erros de cliente (4xx exceto 429) **não** são retried — retry não resolve um erro do chamador.
+
+#### Inspecionando resultados do Pipeline
+
+```go
+// Por step
+sr := results.Get("orders")
+sr.OK()           // true se HTTP 2xx sem erro
+sr.Skipped()      // true se abortado em cascade (errors.Is(sr.Err, restapi.ErrSkipped))
+sr.Attempts       // número de chamadas HTTP feitas (0 = skipped, 1 = sem retry, 2+ = houve retry)
+sr.Latency        // tempo total incluindo todos os retries
+
+// Deserializar body diretamente
+var orders []Order
+results.JSON("orders", &orders)
+
+// Listar todos os steps executados
+results.Names()   // []string
 ```
 
 ### Bloco de decisão (CEL)
@@ -289,8 +428,8 @@ Campos ignorados pela engine recebem a tag `decision:"-"`.
 O `*Result` retornado expõe:
 
 ```go
-result.Passed("is-pj")   // bool
-result.Failed("is-pf")   // bool
+result.Passed("is-pj")    // bool
+result.Failed("is-pf")    // bool
 result.PassedNames()      // []string
 result.Any()              // pelo menos uma regra passou
 result.All()              // todas as regras passaram
@@ -346,6 +485,9 @@ core.ErrItemNotFound      // item não encontrado no banco / cache
 core.ErrNotInitialized    // operação chamada antes de Init
 core.ErrBlockNotFound     // nome não registrado no container
 core.ErrAlreadyRegistered // nome duplicado no container
+
+// restapi — verificáveis via errors.Is
+restapi.ErrSkipped        // step abortado em cascade por falha de dependência
 ```
 
 ## Desenvolvimento local
@@ -372,6 +514,8 @@ go run .
 | `samples/decision-pipeline/` | CEL + DynamoDB + Redis + SSM (contratos) |
 | `samples/restapi/` | REST API — todos os verbos e estratégias de auth |
 | `samples/restapi-chained/` | OAuth2 chaining + decision + DynamoDB |
+| `samples/restapi-pipeline/` | FanOut e Pipeline DAG — execução concorrente em ondas |
+| `samples/restapi-resilience/` | Cascade abort + retry com backoff em cenários reais |
 | `samples/local-dev/` | Ambiente local com docker-compose |
 
 ## Layout do projeto
@@ -388,7 +532,13 @@ go-code-blocks/
 │   ├── redis/                   # Cache e estruturas de dados
 │   ├── parameterstore/          # SSM Parameter Store
 │   ├── secretsmanager/          # AWS Secrets Manager
-│   └── restapi/                 # HTTP REST com OAuth2, Basic, API Key
+│   └── restapi/                 # HTTP REST com OAuth2, Pipeline, Retry
+│       ├── auth.go              # TokenProvider, OAuth2, Basic, API Key
+│       ├── block.go             # Lifecycle + Token() para chaining
+│       ├── concurrent.go        # FanOut, Pipeline DAG, RetryPolicy, cascade abort
+│       ├── operations.go        # Get, Post, Put, Patch, Delete, Do
+│       ├── options.go           # WithBaseURL, WithOAuth2..., WithTokenProvider
+│       └── types.go             # Block, Request, Response
 └── samples/                     # Exemplos executáveis por bloco e combinados
 ```
 
