@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [closed]
     branches: [main]
 
 env:
@@ -54,6 +55,8 @@ jobs:
       #     file: coverage.out
 
   create-version-tag:
+    if: github.event.pull_request.merged == true
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       new_tag: ${{ steps.create-tag.outputs.new_tag }}
@@ -116,6 +119,8 @@ jobs:
           git push --tags
 
   publish:
+    if: github.event.pull_request.merged == true
+    needs: create-version-tag
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.goreleaser.outputs.release_created }}
