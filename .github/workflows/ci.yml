@@ -55,7 +55,7 @@ jobs:
       #     file: coverage.out
 
   create-version-tag:
-    if: github.event.pull_request.merged == true
+    # if: github.event.pull_request.merged == true
     needs: test
     runs-on: ubuntu-latest
     outputs:
@@ -119,7 +119,7 @@ jobs:
           git push --tags
 
   publish:
-    if: github.event.pull_request.merged == true
+    # if: github.event.pull_request.merged == true
     needs: create-version-tag
     runs-on: ubuntu-latest
     outputs:
