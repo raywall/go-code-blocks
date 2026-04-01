@@ -1,0 +1,36 @@
+# .goreleaser.yml (Versão simplificada para apenas criar o release/tag no GitHub)
+version: 2
+
+# Ignora a parte de compilação de binários, pois é uma biblioteca
+builds:
+- id: go-code-blocks
+  main: .
+  binary: go-code-blocks
+  env:
+  - CGO_ENABLED=0
+  goos:
+  - linux
+  - windows
+  - darwin
+  goarch:
+  - amd64
+  - arm64
+  - arm
+  skip: true # Garante que a compilação não ocorrerá
+
+release:
+  name_template: "Release {{ .Tag }}"
+  # Garanta que estes campos estejam corretos. 
+  github:
+    owner: raywall
+    name: go-code-blocks
+  make_latest: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
+    - 'Merge pull request'
+    - 'Merge branch'

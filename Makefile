@@ -7,7 +7,8 @@ run:
 	@go run samples/$(SAMPLE)/main.go
 
 test:
-	@go test ./...
+	@go test ./...; \
+	 act -j test --container-architecture linux/arm64;
 
 coverage:
 	@go test -coverprofile=coverage.out ./...; \
