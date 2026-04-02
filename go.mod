@@ -12,12 +12,15 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.5
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.4
+	github.com/go-sql-driver/mysql v1.9.3
+	github.com/lib/pq v1.12.1
 	github.com/raywall/go-decision-engine v0.0.0-20260326151358-6b2e24ce3fc4
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
 require (
 	cel.dev/expr v0.25.1 // indirect
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 // indirect
