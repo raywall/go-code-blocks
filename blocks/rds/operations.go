@@ -25,7 +25,8 @@ func (b *Block) QueryRows(ctx context.Context, query string, args ...any) ([]Row
 		return nil, err
 	}
 
-	ctx = b.withTimeout(ctx)
+	ctx, cancel := b.withTimeout(ctx)
+	defer cancel()
 	rows, err := b.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("rds %q: query: %w", b.name, err)
@@ -73,7 +74,8 @@ func (b *Block) QueryOne(ctx context.Context, dest any, query string, args ...an
 		return err
 	}
 
-	ctx = b.withTimeout(ctx)
+	ctx, cancel := b.withTimeout(ctx)
+	defer cancel()
 	rows, err := b.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("rds %q: query: %w", b.name, err)
@@ -103,7 +105,8 @@ func QueryAll[T any](ctx context.Context, b *Block, query string, args ...any) (
 		return nil, err
 	}
 
-	ctx = b.withTimeout(ctx)
+	ctx, cancel := b.withTimeout(ctx)
+	defer cancel()
 	rows, err := b.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("rds %q: query: %w", b.name, err)
@@ -162,7 +165,8 @@ func (b *Block) Exec(ctx context.Context, query string, args ...any) (ExecResult
 		return ExecResult{}, err
 	}
 
-	ctx = b.withTimeout(ctx)
+	ctx, cancel := b.withTimeout(ctx)
+	defer cancel()
 	res, err := b.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("rds %q: exec: %w", b.name, err)
@@ -222,15 +226,15 @@ func (b *Block) Ping(ctx context.Context) error {
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // withTimeout applies cfg.defaultTimeout to ctx when ctx has no deadline.
-func (b *Block) withTimeout(ctx context.Context) context.Context {
+// The caller must always defer the returned cancel function to avoid context leaks.
+func (b *Block) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); ok {
-		return ctx // already has a deadline
+		return ctx, func() {} // already has a deadline — no-op cancel
 	}
 	if b.cfg.defaultTimeout <= 0 {
-		return ctx
+		return ctx, func() {}
 	}
-	ctx, _ = context.WithTimeout(ctx, b.cfg.defaultTimeout)
-	return ctx
+	return context.WithTimeout(ctx, b.cfg.defaultTimeout)
 }
 
 // scanInto scans the current row into dest via a JSON roundtrip so that
