@@ -31,6 +31,7 @@
 - **Output declarativo** — `output` constrói respostas HTTP e payloads REST a partir do state
 - **Blocos de integração** — DynamoDB, RDS (PostgreSQL/MySQL), Redis, S3, SSM Parameter Store, Secrets Manager, REST API
 - **Decisão com CEL** — regras de negócio compiladas, reutilizáveis em qualquer step do flow
+- **Leitura de CNAB** — parser declarativo de arquivos CNAB 240 e CNAB 400: declare os campos por nome e posição (1-indexed) e receba registros tipados sem escrever código de parsing
 - **Encadeamento OAuth2** — um bloco `restapi` pode autorizar outro via `WithTokenProvider`
 - **Execução concorrente** — `FanOut` e `Pipeline` DAG com cascade abort e retry exponencial
 - **Options pattern** consistente — sem structs de configuração expostas
@@ -507,6 +508,128 @@ result, _ := router.EvaluateAllFrom(ctx, myStruct)
 result.Passed("is-pj") / result.Any() / result.All() / result.None()
 ```
 
+### CNAB — leitura de arquivos bancários
+
+`cnab.Block` lê arquivos CNAB 240 e CNAB 400 de forma declarativa: você declara os campos de cada registro com nome, posição (1-indexed, igual ao manual técnico do banco) e tipo. O parser converte os bytes brutos em registros tipados (`string`, `int64`, `float64`, `time.Time`, `bool`) sem nenhum código de parsing manual.
+
+```go
+import "github.com/raywall/go-code-blocks/blocks/cnab"
+
+// ── CNAB 240 (FEBRABAN) ───────────────────────────────────────────────────────
+remessa := cnab.New("remessa-pagamentos",
+    cnab.WithFormat(cnab.Format240),
+
+    cnab.WithFileHeader(
+        cnab.NumericField("banco_codigo",  1,  3).Describe("Código do banco"),
+        cnab.Field("nome_empresa",        73, 102).Describe("Nome da empresa"),
+        cnab.DateField("data_geracao",   144, 151),          // DDMMAAAA → time.Time
+        cnab.NumericField("sequencia",   158, 163),
+    ),
+
+    cnab.WithSegment("A",                                    // segmento de pagamento
+        cnab.Field("nome_favorecido",    44, 73),
+        cnab.DecimalField("valor",      120, 134, 2),        // 2 casas decimais → float64
+        cnab.DateField("data_pagamento", 94, 101),
+    ),
+
+    cnab.WithSegment("B",                                    // dados complementares
+        cnab.Field("cidade",    98, 117),
+        cnab.Field("uf",       126, 127),
+    ),
+
+    cnab.WithFileTrailer(
+        cnab.NumericField("total_lotes",    18, 23),
+        cnab.NumericField("total_registros", 24, 29),
+    ),
+
+    cnab.WithSkipUnknownSegments(), // ignora segmentos não declarados
+)
+
+// ── CNAB 400 ──────────────────────────────────────────────────────────────────
+retorno := cnab.New("retorno-cobranca",
+    cnab.WithFormat(cnab.Format400),
+
+    cnab.WithHeader(
+        cnab.Field("nome_banco",      77, 94),
+        cnab.DateField("data_geracao", 95, 100, "020106"),   // DDMMAA
+    ),
+
+    cnab.WithDetail(
+        cnab.NumericField("codigo_ocorrencia",  109, 110),   // 06=liquidação
+        cnab.DecimalField("valor_titulo",       153, 165, 2),
+        cnab.DecimalField("valor_pago",         208, 219, 2),
+        cnab.DateField("data_vencimento",       147, 152, "020106"),
+        cnab.DateField("data_credito",          296, 301, "020106"),
+        cnab.Field("nome_pagador",              218, 257),
+    ),
+
+    cnab.WithTrailer(
+        cnab.NumericField("total_registros", 395, 400),
+    ),
+)
+```
+
+#### Tipos de campo
+
+| Construtor | Tipo Go | Observação |
+|---|---|---|
+| `Field(name, start, end)` | `string` | Alpha — trimado à direita |
+| `NumericField(name, start, end)` | `int64` | Remove zeros à esquerda |
+| `DecimalField(name, start, end, decimals)` | `float64` | Decimais implícitos — "000150" com 2 → 1.50 |
+| `DateField(name, start, end, format?)` | `time.Time` | Padrão DDMMAAAA; formato sobrescrevível |
+| `BoolField(name, start, end)` | `bool` | "1" ou "S" = true |
+
+Adicione `.Describe("texto")` a qualquer campo para documentação e geração de formulários no front-end.
+
+#### Parsing
+
+```go
+// De qualquer io.Reader — arquivo, objeto S3, upload HTTP
+result, err := remessa.Parse(ctx, reader)
+
+// De caminho de arquivo
+result, err := remessa.ParseFile(ctx, "/data/remessa.txt")
+```
+
+#### Navegando o resultado
+
+```go
+// Header e trailer do arquivo
+result.FileHeader["nome_empresa"]          // string
+result.FileHeader["data_geracao"]          // time.Time
+result.FileTrailer["total_registros"]      // int64
+
+// CNAB 240 — lotes e segmentos
+for _, batch := range result.Batches {
+    for _, seg := range batch.Segments {
+        if seg.Code == "A" {
+            fmt.Println(seg.Data["nome_favorecido"]) // string
+            fmt.Println(seg.Data["valor"])           // float64
+            fmt.Println(seg.Data["data_pagamento"])  // time.Time
+        }
+    }
+}
+
+// CNAB 400 — detalhes
+for _, detail := range result.Details {
+    fmt.Println(detail["codigo_ocorrencia"]) // int64
+    fmt.Println(detail["valor_pago"])        // float64
+}
+
+// Erros não-fatais (linhas corrompidas não abortam o parse)
+for _, pe := range result.ParseErrors {
+    slog.Warn("parse error", "linha", pe.Line, "msg", pe.Message)
+}
+
+// Introspecção do layout — útil para o front-end
+for recordName, layout := range remessa.Layout() {
+    for _, field := range layout.Fields {
+        fmt.Printf("%s: %s cols %d-%d\n", recordName, field.Name, field.Start, field.End)
+    }
+}
+```
+
+
 ## Configuração AWS
 
 ```go
@@ -561,6 +684,7 @@ go run .
 | `samples/server-lambda/` | Lambda — API Gateway v2/v1/ALB |
 | `samples/server-local/` | TCP — rastreador OBD/GPS com NMEA |
 | `samples/full-stack/` | DynamoDB + Redis + S3 + SSM + Secrets Manager |
+| `samples/cnab/` | CNAB 240 e CNAB 400 — parse de remessa e retorno com layout declarativo |
 | `samples/local-dev/` | Docker Compose — ambiente local completo |
 
 ## Layout do projeto
@@ -586,6 +710,11 @@ go-code-blocks/
 │   ├── parameterstore/      # SSM Parameter Store
 │   ├── secretsmanager/      # AWS Secrets Manager
 │   ├── restapi/             # HTTP REST — OAuth2, Pipeline DAG, Retry
+│   ├── cnab/                # Leitura de arquivos CNAB 240 e CNAB 400
+│   │   ├── types.go         # Format, FieldType, FieldDef, Record, Batch, Segment, ParseResult
+│   │   ├── options.go       # WithFormat, WithFileHeader, WithSegment, WithDetail, WithTrailer…
+│   │   ├── parser.go        # Engine de parsing linha a linha, conversão de tipos
+│   │   └── block.go         # New, Parse, ParseFile, Layout()
 │   └── server/              # Blocos de entrada — HTTP, Lambda, TCP
 └── samples/                 # Exemplos executáveis
 ```
