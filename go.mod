@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.5
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.4
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/lib/pq v1.12.1
+	github.com/lib/pq v1.12.3
 	github.com/raywall/go-decision-engine v0.0.0-20260326151358-6b2e24ce3fc4
 	github.com/redis/go-redis/v9 v9.18.0
 )
