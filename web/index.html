@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Code Block Studio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="main-layout" id="mainLayout">
+      <aside class="sidebar sidebar-left" id="leftSidebar">
+        <div class="panel-collapse-head">
+          <div class="brand-card">
+            <div class="panel-title-copy">
+              <p class="eyebrow">Golang</p>
+              <h1>CODING BLOCKS</h1>
+            </div>
+          </div>
+          <button class="collapse-btn" id="toggleLeftSidebarBtn" type="button" aria-label="Minimizar painel esquerdo">◀</button>
+        </div>
+
+        <div class="sidebar-scroll-content">
+          <section class="panel-section">
+            <div class="section-heading">
+              <h2>Adicionar blocos</h2>
+              <p>Desenhe serviços Go com blocos reutilizáveis.</p>
+            </div>
+            <div class="tool-list" id="nodePalette"></div>
+          </section>
+
+          <input id="importInput" type="file" accept="application/json" hidden>
+
+          <section class="panel-section panel-tips">
+            <div class="section-heading">
+              <h2>Dicas</h2>
+            </div>
+            <ul>
+              <li>Arraste os blocos livremente pelo canvas.</li>
+              <li>Clique em uma saída e depois em uma entrada para conectar.</li>
+              <li>Dê duplo clique no título de um bloco para editar rapidamente.</li>
+              <li>Use o scroll para zoom e arraste o fundo para pan.</li>
+            </ul>
+          </section>
+        </div>
+      </aside>
+
+      <main class="workspace-shell">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Aplicações por blocos</p>
+            <h2>Designer de micro e nano serviços</h2>
+          </div>
+          <div class="topbar-status">
+            <span class="status-pill" id="storageStatus">Projeto salvo localmente</span>
+          </div>
+        </header>
+
+        <section class="workspace-card">
+          <div class="canvas-toolbar">
+            <div class="canvas-toolbar-group">
+              <button class="ghost-btn" id="zoomOutBtn" type="button">-</button>
+              <button class="ghost-btn" id="zoomInBtn" type="button">+</button>
+              <button class="ghost-btn" id="centerSelectionBtn" type="button">Centralizar seleção</button>
+            </div>
+            <div class="canvas-toolbar-group">
+              <span class="canvas-meta" id="nodeCount">0 blocos</span>
+              <span class="canvas-meta" id="edgeCount">0 conexões</span>
+              <span class="canvas-meta" id="zoomLabel">100%</span>
+            </div>
+          </div>
+
+          <div class="workspace-viewport" id="workspaceViewport">
+            <div class="workspace-surface" id="workspaceSurface">
+              <div class="workspace-stage" id="workspaceStage">
+                <svg class="edge-layer" id="edgeLayer" xmlns="http://www.w3.org/2000/svg"></svg>
+                <div class="node-layer" id="nodeLayer"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="sidebar sidebar-right" id="rightSidebar">
+        <div class="panel-collapse-head">
+          <div class="panel-title-copy">
+            <p class="eyebrow">Inspector</p>
+            <h2>Propriedades</h2>
+          </div>
+          <button class="collapse-btn" id="toggleRightSidebarBtn" type="button" aria-label="Minimizar painel direito">▶</button>
+        </div>
+
+        <div class="sidebar-scroll-content">
+          <section class="panel-section inspector-section">
+            <div class="section-heading">
+              <h2>Detalhes do bloco</h2>
+              <p>Selecione um bloco para editar nome, pacote e comportamento.</p>
+            </div>
+            <div id="inspectorContent" class="inspector-empty">
+              <p>Selecione um bloco no canvas para configurar o serviço, o flow e as integrações.</p>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <section class="bottom-panel" id="bottomPanel">
+      <div class="bottom-panel-header" id="toggleBottomPanelBtn" role="button" tabindex="0" aria-label="Expandir ou minimizar painel inferior">
+        <div class="bottom-tabs" role="tablist" aria-label="Painel inferior">
+          <button class="bottom-tab active" data-bottom-tab="code" type="button" role="tab" aria-selected="true">Go Code</button>
+          <button class="bottom-tab" data-bottom-tab="logs" type="button" role="tab" aria-selected="false">Logs</button>
+        </div>
+        <div class="bottom-panel-actions">
+          <span class="status-pill muted" id="executionStatus">Gerador pronto</span>
+          <button class="run-inline-btn icon-btn" id="clearTerminalBtn" type="button" aria-label="Limpar terminal">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm3 2v7h1.5v-7H10Zm2.5 0v7H14v-7h-1.5Z"></path>
+            </svg>
+          </button>
+          <button class="run-inline-btn icon-btn" id="runWorkflowBottomBtn" type="button" aria-label="Gerar aplicação">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 5v14l11-7L8 5Z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="bottom-panel-content">
+        <section class="panel-section terminal-section bottom-tab-panel active" data-bottom-panel="code">
+          <pre class="app-code" id="appCode"><code></code></pre>
+        </section>
+        <section class="panel-section terminal-section bottom-tab-panel" data-bottom-panel="logs">
+          <input id="serviceNameInput" type="text" value="orders-api" hidden>
+          <div class="terminal" id="terminal"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <div class="context-menu hidden" id="contextMenu">
+    <button type="button" data-action="duplicate">Duplicar bloco</button>
+    <button type="button" data-action="delete">Remover bloco</button>
+  </div>
+
+  <script src="config.js?v=20260413-1"></script>
+  <script src="app.js?v=20260413-1" defer></script>
+</body>
+</html>

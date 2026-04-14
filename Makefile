@@ -1,4 +1,4 @@
-.PHONY: run test coverage
+.PHONY: run test coverage server
 
 # Captura o segundo argumento da linha de comando (ex: auth, agent, upload)
 SAMPLE := $(word 2, $(MAKECMDGOALS))
@@ -13,6 +13,9 @@ test:
 coverage:
 	@go test -coverprofile=coverage.out ./...; \
 	 go tool cover -html=coverage.out -o coverage.html;
+
+server:
+	@python3 -m http.server --directory ./web 4200
 
 # Evita que o Make retorne erro tentando executar o argumento passado no 'run'
 %:
